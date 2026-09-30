@@ -45,6 +45,8 @@ Route::prefix('{current_team}')
         Route::patch('chats/{chat}', [ChatController::class, 'update'])->name('chats.update');
         Route::delete('chats/{chat}', [ChatController::class, 'destroy'])->name('chats.destroy');
         Route::post('chats/{chat}/move', [ChatController::class, 'move'])->name('chats.move');
+        Route::post('chats/{chat}/context', [ChatController::class, 'addContext'])->name('chats.context.store');
+        Route::delete('chats/{chat}/context/{contextItem}', [ChatController::class, 'removeContext'])->name('chats.context.destroy');
         Route::post('chats/{chat}/messages', [ChatMessageController::class, 'store'])->name('chats.messages.store');
         Route::post('chats/{chat}/messages/{message}/output', [ChatMessageController::class, 'saveAsOutput'])->name('chats.messages.output');
         Route::post('chats/{chat}/attachments', [ChatAttachmentController::class, 'store'])->name('chats.attachments.store');

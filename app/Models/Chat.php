@@ -7,16 +7,20 @@ use App\Enums\PromptMode;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
 /**
  * A conversation. With no project it is a free chat and starts with zero context;
  * with a project it gets the project's context and instructions.
  *
  * One-off attachments are stored as media on the chat and are not in the library.
+ * A draft attachment has no message_id custom property until its message is sent.
  *
  * @property int $id
  * @property int|null $user_id
@@ -85,6 +89,40 @@ class Chat extends Model implements HasMedia
     public function outputs(): HasMany
     {
         return $this->hasMany(Output::class);
+    }
+
+    /**
+     * Library items added to this chat only, on top of the project's context.
+     *
+     * @return BelongsToMany<ContextItem, $this>
+     */
+    public function contextItems(): BelongsToMany
+    {
+        return $this->belongsToMany(ContextItem::class);
+    }
+
+    /**
+     * Files attached to sent messages. Drafts in the composer are not context yet.
+     *
+     * @return Collection<int, Media>
+     */
+    public function sentAttachments(): Collection
+    {
+        return $this->getMedia('attachments')
+            ->filter(fn (Media $media) => $media->getCustomProperty('message_id') !== null)
+            ->values();
+    }
+
+    /**
+     * Files in the composer that have not been sent yet.
+     *
+     * @return Collection<int, Media>
+     */
+    public function draftAttachments(): Collection
+    {
+        return $this->getMedia('attachments')
+            ->filter(fn (Media $media) => $media->getCustomProperty('message_id') === null)
+            ->values();
     }
 
     /**

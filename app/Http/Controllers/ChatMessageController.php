@@ -42,8 +42,19 @@ class ChatMessageController extends Controller
         UsageMeter $usage,
     ): StreamableAgentResponse|JsonResponse {
         $data = $request->validate([
-            'text' => ['required', 'string', 'max:20000'],
+            'text' => ['nullable', 'required_without:attachment_ids', 'string', 'max:20000'],
+            'attachment_ids' => ['nullable', 'array', 'max:10'],
+            'attachment_ids.*' => ['integer'],
         ]);
+
+        $text = trim((string) ($data['text'] ?? ''));
+
+        // Only this chat's unsent drafts can go with the message.
+        $drafts = $chat->draftAttachments()->whereIn('id', $data['attachment_ids'] ?? [])->values();
+
+        if ($text === '' && $drafts->isEmpty()) {
+            return response()->json(['message' => 'Write a message or attach a file.'], 422);
+        }
 
         $user = $request->user();
 
@@ -60,11 +71,17 @@ class ChatMessageController extends Controller
         $userMessage = $chat->messages()->create([
             'user_id' => $user->id,
             'role' => 'user',
-            'content' => $data['text'],
+            'content' => $text,
         ]);
 
+        foreach ($drafts as $media) {
+            $media->setCustomProperty('message_id', $userMessage->id)->save();
+        }
+
+        $chat->unsetRelation('media');
+
         if ($chat->title === 'New chat') {
-            $chat->update(['title' => Str::limit(Str::squish($data['text']), 60)]);
+            $chat->update(['title' => Str::limit(Str::squish($text !== '' ? $text : $drafts->pluck('file_name')->implode(', ')), 60)]);
         }
 
         try {
@@ -87,9 +104,15 @@ class ChatMessageController extends Controller
 
         // Context goes in the user message, never the system prompt, so web
         // content cannot pose as instructions. History is stored without it.
+        $ask = $text !== '' ? $text : 'The user sent the attached files without a message. Look at them and ask what they would like to create.';
+
+        if ($drafts->isNotEmpty()) {
+            $ask .= "\n\n(Attached with this message: ".$drafts->pluck('file_name')->implode(', ').'.)';
+        }
+
         $prompt = $context->text === ''
-            ? $data['text']
-            : $context->text."\n\n---\n\nUser request:\n".$data['text'];
+            ? $ask
+            : $context->text."\n\n---\n\nUser request:\n".$ask;
 
         return (new ContentAgent($generation))
             ->withMessages($this->history($chat, $userMessage))

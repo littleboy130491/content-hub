@@ -54,6 +54,9 @@ class ContextItemController extends Controller
                 $request->input('type') === 'image' ? 'mimetypes:image/png,image/jpeg,image/webp,image/gif' : 'mimetypes:video/mp4,video/quicktime,video/webm',
                 'max:'.(int) (config('media-library.max_file_size') / 1024),
             ],
+            // Created from a chat or project: also include it there.
+            'chat_id' => ['nullable', 'integer', Rule::exists('chats', 'id')->where('team_id', $currentTeam->id)],
+            'project_id' => ['nullable', 'integer', Rule::exists('projects', 'id')->where('team_id', $currentTeam->id)],
         ]);
 
         $item = $currentTeam->contextItems()->create([
@@ -65,6 +68,20 @@ class ContextItemController extends Controller
 
         if ($request->hasFile('file') && $data['type'] !== 'text') {
             $item->addMediaFromRequest('file')->toMediaCollection('file');
+        }
+
+        if (isset($data['chat_id']) || isset($data['project_id'])) {
+            if (isset($data['chat_id'])) {
+                $currentTeam->chats()->findOrFail($data['chat_id'])->contextItems()->attach($item);
+            }
+
+            if (isset($data['project_id'])) {
+                $currentTeam->projects()->findOrFail($data['project_id'])->contextItems()->attach($item);
+            }
+
+            $this->toast('Added to the library and included here.');
+
+            return back();
         }
 
         $this->toast('Added to the context library.');

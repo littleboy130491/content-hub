@@ -1,6 +1,7 @@
 import { Form, Head, Link, router } from '@inertiajs/react';
-import { MessageSquarePlus, Trash2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { MessageSquarePlus, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { NewContextForm } from '@/components/content/new-context-form';
 import { EmptyState, PageHeader } from '@/components/content/page-header';
 import { PromptModeField } from '@/components/content/prompt-mode-field';
 import { UntrustedBadge } from '@/components/content/status-badge';
@@ -15,6 +16,14 @@ import {
     CardTitle,
 } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -48,6 +57,13 @@ export default function ProjectShow({
     const team = useTeamSlug();
     const [selected, setSelected] = useState<number[]>(project.contextItemIds);
     const [mode, setMode] = useState<PromptMode>(project.instructionsMode);
+
+    // A new item created here is attached on the server; pick it up.
+    const savedIds = project.contextItemIds.join(',');
+
+    useEffect(() => {
+        setSelected(savedIds ? savedIds.split(',').map(Number) : []);
+    }, [savedIds]);
 
     const dirty = useMemo(
         () =>
@@ -239,7 +255,7 @@ export default function ProjectShow({
                                     ))}
                                 </div>
                             )}
-                            <div className="flex items-center gap-3">
+                            <div className="flex flex-wrap items-center gap-3">
                                 <Button
                                     disabled={!dirty}
                                     onClick={() =>
@@ -255,6 +271,7 @@ export default function ProjectShow({
                                 >
                                     Save context ({selected.length})
                                 </Button>
+                                <NewItemDialog projectId={project.id} />
                                 {dirty && (
                                     <span className="text-sm text-muted-foreground">
                                         Unsaved changes
@@ -294,5 +311,33 @@ export default function ProjectShow({
                 </section>
             </div>
         </>
+    );
+}
+
+function NewItemDialog({ projectId }: { projectId: number }) {
+    const [open, setOpen] = useState(false);
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+                <Button variant="outline">
+                    <Plus /> New item
+                </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-xl">
+                <DialogHeader>
+                    <DialogTitle>New context item</DialogTitle>
+                    <DialogDescription>
+                        Saved to the workspace library and included in this
+                        project.
+                    </DialogDescription>
+                </DialogHeader>
+                <NewContextForm
+                    projectId={projectId}
+                    submitLabel="Save and include"
+                    onSuccess={() => setOpen(false)}
+                />
+            </DialogContent>
+        </Dialog>
     );
 }

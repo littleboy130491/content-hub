@@ -65,6 +65,16 @@ export type Chat = {
     updatedAt: string;
 };
 
+export type LibraryOption = {
+    id: number;
+    type: ContextType;
+    typeLabel: string;
+    title: string;
+    untrusted: boolean;
+};
+
+export type Attachment = MediaFile & { described: boolean };
+
 export type ChatMessage = {
     id: number;
     role: 'user' | 'assistant';
@@ -74,6 +84,7 @@ export type ChatMessage = {
     notes: string[];
     failed: boolean;
     savedOutputId: number | null;
+    attachments: Attachment[];
     createdAt: string;
 };
 
@@ -119,7 +130,7 @@ export type ContextEntry = {
     key: string;
     title: string;
     type: ContextType;
-    source: 'project' | 'attachment' | 'scrape';
+    source: 'project' | 'chat' | 'attachment' | 'scrape';
     handling: 'text' | 'image' | 'convert' | 'excluded' | 'unsupported';
     untrusted: boolean;
     cached: boolean;

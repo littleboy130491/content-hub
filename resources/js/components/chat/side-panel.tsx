@@ -3,7 +3,6 @@ import { Link, router } from '@inertiajs/react';
 import {
     Archive,
     ArchiveRestore,
-    BookmarkPlus,
     FileText,
     Film,
     FolderInput,
@@ -13,6 +12,7 @@ import {
     X,
 } from 'lucide-react';
 import { useState } from 'react';
+import { AddContextDialog } from '@/components/chat/add-context-dialog';
 import { ModelPicker } from '@/components/content/model-picker';
 import { PromptModeField } from '@/components/content/prompt-mode-field';
 import { StatusBadge, UntrustedBadge } from '@/components/content/status-badge';
@@ -39,6 +39,13 @@ import type { ChatPageProps } from '@/pages/chats/show';
 
 const typeIcons = { text: FileText, image: ImageIcon, video: Film, web: Globe };
 
+const sourceLabels: Record<ContextEntry['source'], string> = {
+    project: 'project',
+    chat: 'this chat',
+    attachment: 'attached',
+    scrape: 'scraped, this chat',
+};
+
 const handlingLabels: Record<ContextEntry['handling'], string> = {
     text: 'sent as text',
     image: 'sent as image',
@@ -50,7 +57,7 @@ const handlingLabels: Record<ContextEntry['handling'], string> = {
 export function ChatSidePanel({
     chat,
     context,
-    attachments,
+    library,
     scrapes: chatScrapes,
     effective,
     modelOptions,
@@ -82,6 +89,12 @@ export function ChatSidePanel({
 
     const textModel = effective.models.text;
 
+    // Attachments live on the messages; this panel shows context from elsewhere.
+    const shown = context.filter((entry) => entry.source !== 'attachment');
+    const includedIds = shown
+        .map((entry) => entry.contextItemId)
+        .filter((id): id is number => id !== null);
+
     return (
         <aside className="space-y-4">
             <Card className="gap-4">
@@ -89,25 +102,19 @@ export function ChatSidePanel({
                     <CardTitle className="text-base">Context</CardTitle>
                     <p className="text-xs text-muted-foreground">
                         {chat.project
-                            ? `From the project, plus anything attached to this chat.`
-                            : 'A free chat starts empty. Attachments and scraped pages here are for this chat only.'}
+                            ? 'From the project, plus anything you add to this chat. Files you attach to messages are included too.'
+                            : 'A free chat starts empty. Add library items or scraped pages for this chat only.'}
                     </p>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                    {context.length === 0 && (
+                    {shown.length === 0 && (
                         <p className="text-sm text-muted-foreground">
-                            Zero context.
+                            No context added.
                         </p>
                     )}
 
-                    {context.map((entry) => {
+                    {shown.map((entry) => {
                         const Icon = typeIcons[entry.type];
-                        const attachment =
-                            entry.source === 'attachment'
-                                ? attachments.find(
-                                      (file) => file.id === entry.mediaId,
-                                  )
-                                : undefined;
 
                         return (
                             <div
@@ -135,31 +142,8 @@ export function ChatSidePanel({
                                                 aria-label="Use in this chat"
                                             />
                                         )}
-                                    {attachment && (
-                                        <>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="size-7"
-                                                title="Save to library"
-                                                onClick={() =>
-                                                    router.post(
-                                                        chats.attachments.library.url(
-                                                            [
-                                                                team,
-                                                                chat.id,
-                                                                attachment.id,
-                                                            ],
-                                                        ),
-                                                        {},
-                                                        {
-                                                            preserveScroll: true,
-                                                        },
-                                                    )
-                                                }
-                                            >
-                                                <BookmarkPlus />
-                                            </Button>
+                                    {entry.contextItemId !== null &&
+                                        entry.source === 'chat' && (
                                             <Button
                                                 variant="ghost"
                                                 size="icon"
@@ -167,27 +151,23 @@ export function ChatSidePanel({
                                                 title="Remove from this chat"
                                                 onClick={() =>
                                                     router.delete(
-                                                        chats.attachments.destroy.url(
+                                                        chats.context.destroy.url(
                                                             [
                                                                 team,
                                                                 chat.id,
-                                                                attachment.id,
+                                                                entry.contextItemId!,
                                                             ],
                                                         ),
                                                         {
                                                             preserveScroll: true,
-                                                            only: [
-                                                                'attachments',
-                                                                'context',
-                                                            ],
+                                                            only: ['context'],
                                                         },
                                                     )
                                                 }
                                             >
                                                 <X />
                                             </Button>
-                                        </>
-                                    )}
+                                        )}
                                 </div>
                                 <div className="flex flex-wrap items-center gap-1.5">
                                     <Badge
@@ -208,17 +188,19 @@ export function ChatSidePanel({
                                             ' (ready)'}
                                     </Badge>
                                     <Badge variant="outline">
-                                        {entry.source === 'project'
-                                            ? 'project'
-                                            : entry.source === 'attachment'
-                                              ? 'this chat'
-                                              : 'scraped, this chat'}
+                                        {sourceLabels[entry.source]}
                                     </Badge>
                                     {entry.untrusted && <UntrustedBadge />}
                                 </div>
                             </div>
                         );
                     })}
+
+                    <AddContextDialog
+                        chatId={chat.id}
+                        library={library}
+                        includedIds={includedIds}
+                    />
 
                     {chatScrapes.filter((s) => !s.attachedToChat).length >
                         0 && (
@@ -245,10 +227,11 @@ export function ChatSidePanel({
 
                     {context.some((entry) => entry.handling === 'convert') && (
                         <p className="text-xs text-muted-foreground">
-                            {textModel.name} cannot read some of this directly,
-                            so {effective.models.media.name} describes it as
-                            text. Descriptions are saved and reused. Switch to a
-                            model that reads images to send them as is.
+                            {textModel.name} cannot read some of this context
+                            directly, so {effective.models.media.name} describes
+                            it as text. Descriptions are saved and reused.
+                            Switch to a model that reads images to send them as
+                            is.
                         </p>
                     )}
                 </CardContent>

@@ -1,28 +1,25 @@
 import { useChat } from '@ai-sdk/react';
 import { Head, Link, router } from '@inertiajs/react';
 import { DefaultChatTransport } from 'ai';
-import type { UIMessage } from 'ai';
+import type { FileUIPart, UIMessage } from 'ai';
 import {
     AlertTriangle,
-    ArrowUp,
     BookmarkPlus,
     Check,
-    Globe,
     ImageIcon,
     Loader2,
-    Paperclip,
-    Square,
+    PanelRightClose,
+    PanelRightOpen,
     Video,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { AttachmentChip, Composer } from '@/components/chat/composer';
 import { ChatSidePanel } from '@/components/chat/side-panel';
 import { OutputCard } from '@/components/content/output-card';
 import { SafeMarkdown } from '@/components/content/safe-markdown';
-import { ScrapeDialog } from '@/components/content/scrape-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import { usePollWhile } from '@/hooks/use-poll-while';
 import { useTeamSlug } from '@/hooks/use-team';
 import { xsrfToken } from '@/lib/format';
@@ -34,6 +31,7 @@ import type {
     Chat,
     ChatMessage,
     ContextEntry,
+    LibraryOption,
     MediaFile,
     ModelKind,
     ModelOption,
@@ -48,7 +46,8 @@ export type ChatPageProps = {
     messages: ChatMessage[];
     outputs: Output[];
     context: ContextEntry[];
-    attachments: (MediaFile & { described: boolean })[];
+    drafts: MediaFile[];
+    library: LibraryOption[];
     scrapes: WebScrape[];
     effective: {
         models: Record<ModelKind, ModelOption>;
@@ -66,6 +65,8 @@ export type ChatPageProps = {
 type Meta = { dbId?: number };
 type Message = UIMessage<Meta>;
 
+const PANEL_KEY = 'content-hub.chat-panel-open';
+
 function toUiMessages(messages: ChatMessage[]): Message[] {
     return messages.map((message) => ({
         id: `db-${message.id}`,
@@ -75,12 +76,31 @@ function toUiMessages(messages: ChatMessage[]): Message[] {
     }));
 }
 
+function readPanelOpen(): boolean {
+    try {
+        return localStorage.getItem(PANEL_KEY) !== 'false';
+    } catch {
+        return true;
+    }
+}
+
 export default function ChatShow(props: ChatPageProps) {
     const { chat, messages: stored, outputs } = props;
     const team = useTeamSlug();
-    const [input, setInput] = useState('');
     const bottomRef = useRef<HTMLDivElement>(null);
-    const fileRef = useRef<HTMLInputElement>(null);
+    const [panelOpen, setPanelOpen] = useState(readPanelOpen);
+
+    const togglePanel = () => {
+        setPanelOpen((open) => {
+            try {
+                localStorage.setItem(PANEL_KEY, String(!open));
+            } catch {
+                // Storage can be unavailable; the panel still toggles.
+            }
+
+            return !open;
+        });
+    };
 
     const { messages, sendMessage, status, setMessages, stop } =
         useChat<Message>({
@@ -93,14 +113,20 @@ export default function ChatShow(props: ChatPageProps) {
                     'X-XSRF-TOKEN': xsrfToken(),
                     'X-Requested-With': 'XMLHttpRequest',
                 }),
-                // The server keeps the history; send only the new text.
-                prepareSendMessagesRequest: ({ messages: all }) => {
+                // The server keeps the history; send only the new text and the
+                // IDs of the files attached to it.
+                prepareSendMessagesRequest: ({ messages: all, body }) => {
                     const last = all[all.length - 1];
                     const text = last.parts
                         .map((part) => (part.type === 'text' ? part.text : ''))
                         .join('');
 
-                    return { body: { text } };
+                    return {
+                        body: {
+                            text,
+                            attachment_ids: body?.attachment_ids ?? [],
+                        },
+                    };
                 },
             }),
             onError: (error) => {
@@ -120,14 +146,7 @@ export default function ChatShow(props: ChatPageProps) {
 
     function reloadAfterTurn() {
         router.reload({
-            only: [
-                'chat',
-                'messages',
-                'outputs',
-                'context',
-                'attachments',
-                'usage',
-            ],
+            only: ['chat', 'messages', 'outputs', 'context', 'drafts', 'usage'],
         });
     }
 
@@ -151,7 +170,7 @@ export default function ChatShow(props: ChatPageProps) {
             (s) => s.status === 'pending' || s.status === 'processing',
         );
 
-    usePollWhile(running, ['outputs', 'scrapes', 'usage']);
+    usePollWhile(running, ['outputs', 'scrapes', 'usage', 'context']);
 
     const busy = status === 'submitted' || status === 'streaming';
 
@@ -175,57 +194,41 @@ export default function ChatShow(props: ChatPageProps) {
         [stored],
     );
 
-    function submit() {
-        const text = input.trim();
+    function send(text: string, attachments: MediaFile[]) {
+        // Shown on the message right away; the server stores the real link.
+        const files: FileUIPart[] = attachments.map((file) => ({
+            type: 'file',
+            mediaType: file.mime ?? 'application/octet-stream',
+            url: file.url,
+            filename: file.name,
+        }));
 
-        if (!text || busy) {
-            return;
-        }
+        const options = {
+            body: { attachment_ids: attachments.map((file) => file.id) },
+        };
 
-        // /scrape <url> [what you need] — scraping only starts when the user asks.
-        const scrape = text.match(/^\/scrape\s+(\S+)\s*([\s\S]*)$/i);
-
-        if (scrape) {
-            router.post(scrapes.store.url(team), {
-                url: scrape[1],
-                instruction: scrape[2] || null,
-                chat_id: chat.id,
-            });
-            setInput('');
-
-            return;
-        }
-
-        void sendMessage({ text });
-        setInput('');
+        void (text
+            ? sendMessage({ text, files }, options)
+            : sendMessage({ files }, options));
     }
 
-    function upload(files: FileList | null) {
-        if (!files?.length) {
-            return;
-        }
-
-        router.post(
-            chats.attachments.store.url([team, chat.id]),
-            { files: Array.from(files) },
-            {
-                forceFormData: true,
-                preserveScroll: true,
-                only: ['attachments', 'context'],
-                onError: (errors) =>
-                    toast.error(Object.values(errors)[0] ?? 'Upload failed.'),
-            },
-        );
-
-        if (fileRef.current) {
-            fileRef.current.value = '';
-        }
+    function scrape(url: string, instruction: string | null) {
+        router.post(scrapes.store.url(team), {
+            url,
+            instruction,
+            chat_id: chat.id,
+        });
     }
 
     return (
         <>
             <Head title={chat.title} />
-            <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_380px] lg:p-6">
+            <div
+                className={cn(
+                    'grid min-h-0 flex-1 gap-4 p-4 lg:p-6',
+                    panelOpen && 'lg:grid-cols-[minmax(0,1fr)_380px]',
+                )}
+            >
                 <section className="flex min-h-[70vh] min-w-0 flex-col rounded-xl border">
                     <header className="flex items-center justify-between gap-3 border-b px-4 py-3">
                         <div className="min-w-0">
@@ -247,15 +250,39 @@ export default function ChatShow(props: ChatPageProps) {
                                         </Link>
                                     </>
                                 ) : (
-                                    'Free chat · starts with zero context'
+                                    'Free chat'
                                 )}
                                 {' · '}
                                 {props.effective.models.text.name}
                             </p>
                         </div>
-                        {chat.archived && (
-                            <Badge variant="outline">Archived</Badge>
-                        )}
+                        <div className="flex shrink-0 items-center gap-2">
+                            {chat.archived && (
+                                <Badge variant="outline">Archived</Badge>
+                            )}
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={togglePanel}
+                                title={
+                                    panelOpen
+                                        ? 'Hide the side panel'
+                                        : 'Show context and settings'
+                                }
+                                aria-label={
+                                    panelOpen
+                                        ? 'Hide the side panel'
+                                        : 'Show context and settings'
+                                }
+                                aria-expanded={panelOpen}
+                            >
+                                {panelOpen ? (
+                                    <PanelRightClose />
+                                ) : (
+                                    <PanelRightOpen />
+                                )}
+                            </Button>
+                        </div>
                     </header>
 
                     <div className="flex-1 space-y-6 overflow-y-auto p-4">
@@ -266,8 +293,8 @@ export default function ChatShow(props: ChatPageProps) {
                                 </p>
                                 <p>
                                     Ask for a post, a script, an image or a
-                                    short video. The agent picks the workflow.
-                                    Type{' '}
+                                    short video. Paste or drop files to attach
+                                    them, or type{' '}
                                     <code className="rounded bg-muted px-1">
                                         /scrape https://…
                                     </code>{' '}
@@ -307,6 +334,20 @@ export default function ChatShow(props: ChatPageProps) {
                                             },
                                         )
                                     }
+                                    onSaveFile={(mediaId) =>
+                                        router.post(
+                                            chats.attachments.library.url([
+                                                team,
+                                                chat.id,
+                                                mediaId,
+                                            ]),
+                                            {},
+                                            {
+                                                preserveScroll: true,
+                                                only: ['library'],
+                                            },
+                                        )
+                                    }
                                 />
                             );
                         })}
@@ -321,74 +362,18 @@ export default function ChatShow(props: ChatPageProps) {
                     </div>
 
                     <footer className="border-t p-3">
-                        <div className="rounded-xl border bg-background focus-within:ring-2 focus-within:ring-ring/30">
-                            <Textarea
-                                value={input}
-                                onChange={(event) =>
-                                    setInput(event.target.value)
-                                }
-                                onKeyDown={(event) => {
-                                    if (
-                                        event.key === 'Enter' &&
-                                        !event.shiftKey
-                                    ) {
-                                        event.preventDefault();
-                                        submit();
-                                    }
-                                }}
-                                rows={3}
-                                placeholder="Describe what you need, or /scrape https://example.com"
-                                className="resize-none border-0 shadow-none focus-visible:ring-0"
-                            />
-                            <div className="flex items-center justify-between gap-2 px-2 pb-2">
-                                <div className="flex items-center gap-1">
-                                    <input
-                                        ref={fileRef}
-                                        type="file"
-                                        multiple
-                                        className="hidden"
-                                        accept="image/*,video/mp4,video/quicktime,video/webm,text/plain,text/markdown,text/csv,application/json"
-                                        onChange={(event) =>
-                                            upload(event.target.files)
-                                        }
-                                    />
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => fileRef.current?.click()}
-                                        title="Attach files to this chat only"
-                                    >
-                                        <Paperclip /> Attach
-                                    </Button>
-                                    <ScrapeDialog chatId={chat.id}>
-                                        <Button variant="ghost" size="sm">
-                                            <Globe /> Scrape
-                                        </Button>
-                                    </ScrapeDialog>
-                                </div>
-                                {busy ? (
-                                    <Button
-                                        size="sm"
-                                        variant="secondary"
-                                        onClick={() => void stop()}
-                                    >
-                                        <Square /> Stop
-                                    </Button>
-                                ) : (
-                                    <Button
-                                        size="sm"
-                                        onClick={submit}
-                                        disabled={!input.trim()}
-                                    >
-                                        <ArrowUp /> Send
-                                    </Button>
-                                )}
-                            </div>
-                        </div>
+                        <Composer
+                            chatId={chat.id}
+                            drafts={props.drafts}
+                            busy={busy}
+                            onSend={send}
+                            onStop={() => void stop()}
+                            onScrape={scrape}
+                        />
                     </footer>
                 </section>
 
-                <ChatSidePanel {...props} />
+                {panelOpen && <ChatSidePanel {...props} />}
             </div>
         </>
     );
@@ -399,11 +384,13 @@ function MessageBubble({
     record,
     outputs,
     onSave,
+    onSaveFile,
 }: {
     message: Message;
     record?: ChatMessage;
     outputs: Output[];
     onSave: () => void;
+    onSaveFile: (mediaId: number) => void;
 }) {
     const isUser = message.role === 'user';
     const text = message.parts
@@ -412,6 +399,23 @@ function MessageBubble({
 
     const tools = message.parts.filter((part) => part.type.startsWith('tool-'));
 
+    // Stored attachments once saved; the optimistic file parts while sending.
+    const files = record
+        ? record.attachments.map((file) => ({
+              id: file.id,
+              name: file.name,
+              mime: file.mime,
+              url: file.url,
+          }))
+        : message.parts
+              .filter((part): part is FileUIPart => part.type === 'file')
+              .map((part) => ({
+                  id: null,
+                  name: part.filename ?? 'file',
+                  mime: part.mediaType,
+                  url: part.url,
+              }));
+
     return (
         <div
             className={cn(
@@ -419,24 +423,52 @@ function MessageBubble({
                 isUser ? 'items-end' : 'items-start',
             )}
         >
-            <div
-                className={cn(
-                    'max-w-[85%] rounded-2xl px-4 py-3 text-sm',
-                    isUser
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted/50',
-                    record?.failed &&
-                        'border border-destructive/50 bg-destructive/5',
-                )}
-            >
-                {isUser ? (
-                    <p className="whitespace-pre-wrap">{text}</p>
-                ) : text ? (
-                    <SafeMarkdown>{text}</SafeMarkdown>
-                ) : (
-                    <span className="text-muted-foreground">…</span>
-                )}
-            </div>
+            {files.length > 0 && (
+                <div
+                    className={cn(
+                        'flex max-w-[85%] flex-wrap gap-2',
+                        isUser && 'justify-end',
+                    )}
+                >
+                    {files.map((file) => (
+                        <AttachmentChip
+                            key={file.url}
+                            name={file.name}
+                            mime={file.mime}
+                            preview={
+                                file.mime?.startsWith('image/')
+                                    ? file.url
+                                    : null
+                            }
+                            href={file.url}
+                            onSave={
+                                file.id ? () => onSaveFile(file.id) : undefined
+                            }
+                        />
+                    ))}
+                </div>
+            )}
+
+            {(text || !isUser) && (
+                <div
+                    className={cn(
+                        'max-w-[85%] rounded-2xl px-4 py-3 text-sm',
+                        isUser
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-muted/50',
+                        record?.failed &&
+                            'border border-destructive/50 bg-destructive/5',
+                    )}
+                >
+                    {isUser ? (
+                        <p className="whitespace-pre-wrap">{text}</p>
+                    ) : text ? (
+                        <SafeMarkdown>{text}</SafeMarkdown>
+                    ) : (
+                        <span className="text-muted-foreground">…</span>
+                    )}
+                </div>
+            )}
 
             {tools.map((part) => {
                 const state = 'state' in part ? String(part.state) : '';

@@ -9,6 +9,8 @@ use App\Http\Resources\MediaUrl;
 use App\Http\Resources\OutputResource;
 use App\Http\Resources\WebScrapeResource;
 use App\Models\Chat;
+use App\Models\ChatMessage;
+use App\Models\ContextItem;
 use App\Models\Project;
 use App\Models\Team;
 use App\Services\Context\ChatContextBuilder;
@@ -90,13 +92,18 @@ class ChatController extends Controller
 
         return Inertia::render('chats/show', [
             'chat' => (new ChatResource($chat))->resolve(),
-            'messages' => ChatMessageResource::collection($chat->messages()->with('user')->get())->resolve(),
+            'messages' => fn () => $this->messages($chat, $currentTeam),
             'outputs' => fn () => OutputResource::collection($chat->outputs()->with(['media', 'team', 'chat', 'user'])->oldest('id')->get())->resolve(),
             'context' => fn () => $context->inspect($chat),
-            'attachments' => fn () => $chat->getMedia('attachments')->map(fn (Media $media) => [
-                ...MediaUrl::of($media, $currentTeam->slug),
-                'described' => filled($media->getCustomProperty('description')),
-            ])->values(),
+            'drafts' => fn () => $chat->draftAttachments()->map(fn (Media $media) => MediaUrl::of($media, $currentTeam->slug))->values(),
+            'library' => fn () => $currentTeam->contextItems()->orderBy('title')->get(['id', 'type', 'title', 'untrusted'])
+                ->map(fn (ContextItem $item) => [
+                    'id' => $item->id,
+                    'type' => $item->type->value,
+                    'typeLabel' => $item->type->label(),
+                    'title' => $item->title,
+                    'untrusted' => $item->untrusted,
+                ]),
             'scrapes' => fn () => WebScrapeResource::collection($chat->scrapes()->with('chat')->latest()->get())->resolve(),
             'effective' => [
                 'models' => collect($effective)->map(fn (string $id) => $catalog->find($id)?->toOption() ?? ['id' => $id, 'name' => $id, 'input' => [], 'output' => [], 'contextLength' => null, 'supportsTools' => true]),
@@ -153,6 +160,46 @@ class ChatController extends Controller
         $chat->update(['project_id' => $data['project_id']]);
 
         $this->toast('Chat moved. It now uses the project\'s context and instructions.');
+
+        return back();
+    }
+
+    /**
+     * Messages with the files that were sent with each one.
+     *
+     * @return list<array<string, mixed>>
+     */
+    protected function messages(Chat $chat, Team $team): array
+    {
+        $files = $chat->sentAttachments()->groupBy(fn (Media $media) => $media->getCustomProperty('message_id'));
+
+        return array_values($chat->messages()->with('user')->get()->map(fn (ChatMessage $message) => [
+            ...(new ChatMessageResource($message))->resolve(),
+            'attachments' => ($files->get($message->id) ?? collect())->map(fn (Media $media) => [
+                ...MediaUrl::of($media, $team->slug),
+                'described' => filled($media->getCustomProperty('description')),
+            ])->values()->all(),
+        ])->all());
+    }
+
+    /**
+     * Add library items to this chat only.
+     */
+    public function addContext(Request $request, Team $currentTeam, Chat $chat): RedirectResponse
+    {
+        $data = $request->validate([
+            'context_item_ids' => ['required', 'array', 'min:1'],
+            'context_item_ids.*' => ['integer', Rule::exists('context_items', 'id')->where('team_id', $currentTeam->id)],
+        ]);
+
+        $chat->contextItems()->syncWithoutDetaching($data['context_item_ids']);
+
+        return back();
+    }
+
+    public function removeContext(Team $currentTeam, Chat $chat, ContextItem $contextItem): RedirectResponse
+    {
+        $chat->contextItems()->detach($contextItem);
 
         return back();
     }

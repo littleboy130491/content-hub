@@ -14,7 +14,7 @@ class ContextEntry extends Data
         public string $title,
         /** text, image, video or web */
         public string $type,
-        /** project, attachment or scrape */
+        /** project, chat (added to this chat), attachment or scrape */
         public string $source,
         /** text, image (sent as is), convert (described by the media model), excluded or unsupported */
         public string $handling,

@@ -8,12 +8,12 @@ use App\Models\WebScrape;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
 /**
- * One piece of context a chat can see, from any of its three sources.
+ * One piece of context a chat can see, from any of its sources.
  */
 final class ContextSource
 {
     /**
-     * @param  'project'|'attachment'|'scrape'  $source
+     * @param  'project'|'chat'|'attachment'|'scrape'  $source
      */
     public function __construct(
         public readonly string $key,

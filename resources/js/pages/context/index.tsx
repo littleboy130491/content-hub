@@ -1,4 +1,4 @@
-import { Form, Head, Link, router } from '@inertiajs/react';
+import { Head, Link, router } from '@inertiajs/react';
 import { FileText, Film, Globe, Image as ImageIcon, Plus } from 'lucide-react';
 import { useState } from 'react';
 import {
@@ -6,9 +6,9 @@ import {
     PageHeader,
     Pagination,
 } from '@/components/content/page-header';
+import { NewContextForm } from '@/components/content/new-context-form';
 import { ScrapeDialog } from '@/components/content/scrape-dialog';
 import { UntrustedBadge } from '@/components/content/status-badge';
-import InputError from '@/components/input-error';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,15 +16,12 @@ import {
     Dialog,
     DialogContent,
     DialogDescription,
-    DialogFooter,
     DialogHeader,
     DialogTitle,
     DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useTeamSlug } from '@/hooks/use-team';
 import { timeAgo } from '@/lib/format';
 import context from '@/routes/context';
@@ -179,9 +176,7 @@ export default function ContextIndex({ items, filters, types }: Props) {
 }
 
 function AddContextDialog() {
-    const team = useTeamSlug();
     const [open, setOpen] = useState(false);
-    const [type, setType] = useState<'text' | 'image' | 'video'>('text');
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -198,106 +193,7 @@ function AddContextDialog() {
                         to use it in chats.
                     </DialogDescription>
                 </DialogHeader>
-                <Tabs
-                    value={type}
-                    onValueChange={(value) => setType(value as typeof type)}
-                >
-                    <TabsList className="w-full">
-                        <TabsTrigger value="text">Text</TabsTrigger>
-                        <TabsTrigger value="image">Image</TabsTrigger>
-                        <TabsTrigger value="video">Video</TabsTrigger>
-                    </TabsList>
-                    {(['text', 'image', 'video'] as const).map((kind) => (
-                        <TabsContent key={kind} value={kind}>
-                            <Form
-                                key={`${kind}-${open}`}
-                                {...context.store.form(team)}
-                                className="space-y-4 pt-2"
-                                onSuccess={() => setOpen(false)}
-                            >
-                                {({ errors, processing }) => (
-                                    <>
-                                        <input
-                                            type="hidden"
-                                            name="type"
-                                            value={kind}
-                                        />
-                                        <div className="grid gap-2">
-                                            <Label htmlFor={`${kind}-title`}>
-                                                Title
-                                            </Label>
-                                            <Input
-                                                id={`${kind}-title`}
-                                                name="title"
-                                                required
-                                                placeholder={
-                                                    kind === 'text'
-                                                        ? 'Brand voice'
-                                                        : kind === 'image'
-                                                          ? 'Product photo'
-                                                          : 'Sample ad'
-                                                }
-                                            />
-                                            <InputError
-                                                message={errors.title}
-                                            />
-                                        </div>
-                                        {kind === 'text' ? (
-                                            <div className="grid gap-2">
-                                                <Label htmlFor="text-body">
-                                                    Text
-                                                </Label>
-                                                <Textarea
-                                                    id="text-body"
-                                                    name="body"
-                                                    rows={10}
-                                                    required
-                                                    placeholder="Paste notes, guidelines, product details, past posts..."
-                                                />
-                                                <InputError
-                                                    message={errors.body}
-                                                />
-                                            </div>
-                                        ) : (
-                                            <div className="grid gap-2">
-                                                <Label htmlFor={`${kind}-file`}>
-                                                    File
-                                                </Label>
-                                                <Input
-                                                    id={`${kind}-file`}
-                                                    name="file"
-                                                    type="file"
-                                                    required
-                                                    accept={
-                                                        kind === 'image'
-                                                            ? 'image/png,image/jpeg,image/webp,image/gif'
-                                                            : 'video/mp4,video/quicktime,video/webm'
-                                                    }
-                                                />
-                                                <p className="text-xs text-muted-foreground">
-                                                    {kind === 'video'
-                                                        ? 'Chat models get a description made from sampled frames.'
-                                                        : 'Models that cannot read images get a description instead.'}
-                                                </p>
-                                                <InputError
-                                                    message={errors.file}
-                                                />
-                                            </div>
-                                        )}
-                                        <DialogFooter>
-                                            <Button
-                                                type="submit"
-                                                disabled={processing}
-                                            >
-                                                Add to library
-                                            </Button>
-                                        </DialogFooter>
-                                    </>
-                                )}
-                            </Form>
-                        </TabsContent>
-                    ))}
-                </Tabs>
+                <NewContextForm onSuccess={() => setOpen(false)} />
             </DialogContent>
         </Dialog>
     );

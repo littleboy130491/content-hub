@@ -16,9 +16,9 @@ use Laravel\Ai\Files\Image;
 /**
  * Gathers a chat's context and checks it against the chat model's capabilities.
  *
- * Sources: the project's context items (project chats only), the chat's one-off
- * attachments, and web pages scraped for this chat only. A free chat with no
- * attachments has zero context.
+ * Sources: the project's context items (project chats only), library items
+ * added to this chat, files attached to sent messages, and web pages scraped
+ * for this chat only. A new free chat has zero context.
  *
  * A model that cannot read images or video gets a text description made by the
  * media reading model, cached on the item. Video is always described, since
@@ -128,7 +128,26 @@ class ChatContextBuilder
             }
         }
 
-        foreach ($chat->getMedia('attachments') as $media) {
+        $projectItemIds = $sources->map(fn (ContextSource $source) => $source->item?->id)->filter()->all();
+
+        foreach ($chat->contextItems()->with('media')->orderBy('title')->get() as $item) {
+            if (in_array($item->id, $projectItemIds, true)) {
+                continue;
+            }
+
+            $sources->push(new ContextSource(
+                key: 'item-'.$item->id,
+                title: $item->title,
+                type: $item->type,
+                source: 'chat',
+                text: $item->body,
+                media: $item->file(),
+                item: $item,
+                untrusted: $item->untrusted,
+            ));
+        }
+
+        foreach ($chat->sentAttachments() as $media) {
             $sources->push(new ContextSource(
                 key: 'media-'.$media->id,
                 title: $media->name,
@@ -157,7 +176,7 @@ class ChatContextBuilder
     protected function entry(Chat $chat, ContextSource $source, ?AiModel $model): ContextEntry
     {
         $handling = match (true) {
-            $source->item && $chat->excludes($source->item) => 'excluded',
+            $source->source === 'project' && $source->item && $chat->excludes($source->item) => 'excluded',
             $source->type === ContextType::Image => match (true) {
                 ! $source->media => 'unsupported',
                 ! $model || $model->reads('image') => 'image',
